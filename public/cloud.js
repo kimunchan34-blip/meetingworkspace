@@ -2,6 +2,7 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/13.4.0/firebas
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut, setPersistence, browserSessionPersistence } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js';
 import { getFirestore, doc, collection, getDocFromServer, getDocsFromServer, onSnapshot, runTransaction } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js';
 import { firebaseConfig } from './firebase-config.js';
+import { artifactInput } from './artifact-model.js';
 
 let auth, db;
 export const workspaceAccountEmail = 'workspace-access@meetingworkspace.invalid';
@@ -10,7 +11,7 @@ const defaultColors = ['#7762ca', '#468b78', '#5083c6', '#d39343', '#5b9fa7', '#
 function references() {
   if (!auth?.currentUser) throw new Error('계정으로 로그인해 주세요.');
   const userId = auth.currentUser.uid;
-  return { config: doc(db, 'users', userId, 'workspace', 'config'), meetings: collection(db, 'users', userId, 'meetings') };
+  return { config: doc(db, 'users', userId, 'workspace', 'config'), meetings: collection(db, 'users', userId, 'meetings'), artifacts: collection(db, 'users', userId, 'artifacts') };
 }
 export function friendlyError(error) {
   const messages = {
@@ -23,7 +24,7 @@ export function friendlyError(error) {
     'auth/operation-not-allowed': '접속 기능을 사용할 수 없습니다. 관리자에게 문의해 주세요.',
     'auth/configuration-not-found': 'Firebase Authentication 설정이 필요합니다.',
     'auth/network-request-failed': '네트워크 연결을 확인한 후 다시 시도해 주세요.',
-    'permission-denied': '회의록 접근 권한을 확인할 수 없습니다. 다시 로그인해 주세요.',
+    'permission-denied': '워크스페이스 접근 권한을 확인할 수 없습니다. 다시 로그인해 주세요.',
     'unavailable': '클라우드에 연결할 수 없습니다. 인터넷 연결을 확인하고 다시 시도해 주세요.',
   };
   return messages[error.code] || error.message || '요청을 처리할 수 없습니다.';
@@ -49,35 +50,42 @@ export async function ensureWorkspace() {
     if (snapshot.exists()) return;
     transaction.set(config, {
       categories: defaultNames.map((name, index) => ({ id: index + 1, name, color: defaultColors[index], count: 0 })),
-      nextMeetingId: 1, nextCategoryId: 8, version: 1,
+      nextMeetingId: 1, nextArtifactId: 1, nextCategoryId: 8, version: 1,
     });
   });
 }
-function combine(config, documents) {
-  const categories = (config?.categories || []).map(category => ({ ...category, count: 0 }));
+function combine(config, documents, artifactDocuments) {
+  const categories = (config?.categories || []).map(category => ({ ...category, count: 0, artifact_count: 0 }));
   const meetings = documents.map(snapshot => {
     const meeting = snapshot.data();
     const category = categories.find(item => item.id === meeting.category_id);
     if (category) category.count++;
     return { ...meeting, category_name: category?.name || '미분류', category_color: category?.color || '#75839a' };
   });
-  return { meetings, categories };
+  const artifacts = artifactDocuments.map(snapshot => {
+    const artifact = snapshot.data();
+    const category = categories.find(item => item.id === artifact.category_id);
+    if (category) category.artifact_count++;
+    return { ...artifact, category_name: category?.name || '미분류', category_color: category?.color || '#75839a' };
+  });
+  return { meetings, categories, artifacts };
 }
 export async function fetchWorkspace() {
   const refs = references();
-  const [config, meetings] = await Promise.all([getDocFromServer(refs.config), getDocsFromServer(refs.meetings)]);
-  return combine(config.data(), meetings.docs);
+  const [config, meetings, artifacts] = await Promise.all([getDocFromServer(refs.config), getDocsFromServer(refs.meetings), getDocsFromServer(refs.artifacts)]);
+  return combine(config.data(), meetings.docs, artifacts.docs);
 }
 export function watchWorkspace(onData, onError, onConnection) {
   const refs = references();
-  let config, documents, configOnline = false, meetingsOnline = false;
+  let config, documents, artifactDocuments, configOnline = false, meetingsOnline = false, artifactsOnline = false;
   const emit = () => {
-    onConnection(configOnline && meetingsOnline);
-    if (config && documents) onData(combine(config, documents));
+    onConnection(configOnline && meetingsOnline && artifactsOnline);
+    if (config && documents && artifactDocuments) onData(combine(config, documents, artifactDocuments));
   };
   const stopConfig = onSnapshot(refs.config, { includeMetadataChanges: true }, snapshot => { config = snapshot.data(); configOnline = !snapshot.metadata.fromCache; emit(); }, onError);
   const stopMeetings = onSnapshot(refs.meetings, { includeMetadataChanges: true }, snapshot => { documents = snapshot.docs; meetingsOnline = !snapshot.metadata.fromCache; emit(); }, onError);
-  return () => { stopConfig(); stopMeetings(); };
+  const stopArtifacts = onSnapshot(refs.artifacts, { includeMetadataChanges: true }, snapshot => { artifactDocuments = snapshot.docs; artifactsOnline = !snapshot.metadata.fromCache; emit(); }, onError);
+  return () => { stopConfig(); stopMeetings(); stopArtifacts(); };
 }
 function categoryInput(body) {
   const name = String(body.name || '').trim();
@@ -106,10 +114,11 @@ function meetingInput(body, categories) {
   return result;
 }
 export async function request(url, method = 'GET', body) {
-  const match = url.match(/^\/api\/(categories|meetings)(?:\/(\d+))?$/);
+  const match = url.match(/^\/api\/(categories|meetings|artifacts)(?:\/(\d+))?$/);
   if (!match) throw new Error('요청한 기능을 찾을 수 없습니다.');
   const [, resource, idText] = match;
   const id = idText ? Number(idText) : null;
+  if (!['GET', 'POST', 'PUT', 'DELETE'].includes(method) || (method === 'POST' && id !== null) || (['PUT', 'DELETE'].includes(method) && id === null)) throw new Error('올바르지 않은 요청입니다.');
   const refs = references();
   if (method === 'GET') {
     const data = await fetchWorkspace();
@@ -125,18 +134,44 @@ export async function request(url, method = 'GET', body) {
       const index = categories.findIndex(category => category.id === id);
       if (id !== null && index < 0) throw new Error('카테고리를 찾을 수 없습니다.');
       if (method === 'DELETE') {
-        if (categories[index].count > 0) throw new Error('회의록의 카테고리를 먼저 변경한 후 삭제해 주세요.');
+        if (categories[index].count > 0 || categories[index].artifact_count > 0) throw new Error('등록된 회의록과 산출물의 카테고리를 먼저 변경한 후 삭제해 주세요.');
         categories.splice(index, 1);
       } else {
         const input = categoryInput(body);
         if (categories.some(category => category.id !== id && category.name === input.name)) throw new Error('이미 등록된 카테고리 이름입니다.');
         if (method === 'POST') {
           if (categories.length >= 100) throw new Error('카테고리는 100개까지 등록할 수 있습니다.');
-          categories.push({ ...input, id: config.nextCategoryId, count: 0 });
+          categories.push({ ...input, id: config.nextCategoryId, count: 0, artifact_count: 0 });
         } else categories[index] = { ...categories[index], ...input };
       }
       transaction.update(refs.config, { categories, nextCategoryId: config.nextCategoryId + (method === 'POST' ? 1 : 0), version: config.version + 1 });
       return { ok: true };
+    }
+    if (resource === 'artifacts') {
+      const nextId = config.nextArtifactId || 1;
+      const artifactRef = doc(refs.artifacts, String(method === 'POST' ? nextId : id));
+      const snapshot = await transaction.get(artifactRef);
+      const existing = snapshot.exists() ? snapshot.data() : null;
+      if (method !== 'POST' && !existing) throw new Error('산출물을 찾을 수 없습니다.');
+      if (existing && existing.version !== body?.version) throw new Error('다른 기기에서 산출물이 변경되었습니다. 목록에서 산출물을 다시 열어 확인해 주세요.');
+      const changeCount = (categoryId, difference) => {
+        const category = categories.find(item => item.id === categoryId);
+        if (category) category.artifact_count = Math.max(0, (category.artifact_count || 0) + difference);
+      };
+      if (method === 'DELETE') {
+        changeCount(existing.category_id, -1);
+        transaction.delete(artifactRef);
+        transaction.update(refs.config, { categories, version: config.version + 1 });
+        return { ok: true };
+      }
+      const input = artifactInput(body, categories);
+      if (existing && existing.category_id !== input.category_id) changeCount(existing.category_id, -1);
+      if (!existing || existing.category_id !== input.category_id) changeCount(input.category_id, 1);
+      const now = new Date().toISOString();
+      const artifact = { ...input, id: existing?.id || nextId, created_at: existing?.created_at || now, updated_at: now, version: (existing?.version || 0) + 1 };
+      transaction.set(artifactRef, artifact);
+      transaction.update(refs.config, { categories, nextArtifactId: nextId + (method === 'POST' ? 1 : 0), version: config.version + 1 });
+      return artifact;
     }
     const meetingRef = doc(refs.meetings, String(method === 'POST' ? config.nextMeetingId : id));
     const snapshot = await transaction.get(meetingRef);

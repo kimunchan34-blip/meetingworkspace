@@ -1,4 +1,5 @@
 import { initializeCloud, login, logout, ensureWorkspace, fetchWorkspace, watchWorkspace, request, friendlyError, workspaceAccountEmail } from './cloud.js';
+import { normalizeArtifactUrl } from './artifact-model.js';
 
 const $ = selector => document.querySelector(selector);
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -16,10 +17,12 @@ const paths = {
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   edit: '<path d="m16 3 5 5-12 12-6 1 1-6zM13 6l5 5"/>',
   trash: '<path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/>',
+  link: '<path d="M10 13a5 5 0 0 0 7 .1l3-3a5 5 0 0 0-7-7l-2 2M14 11a5 5 0 0 0-7-.1l-3 3a5 5 0 0 0 7 7l2-2"/>',
+  external: '<path d="M14 3h7v7M21 3l-11 11M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5"/>',
 };
 const icon = name => `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.document}</svg>`;
 function hydrateIcons() { document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); }); }
-let meetings = [], categories = [], selectedCategory = '', page = 1, toastTimer;
+let meetings = [], artifacts = [], categories = [], selectedCategory = '', currentView = 'meetings', page = 1, artifactPage = 1, toastTimer;
 const pageSize = 7;
 const localDate = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const dateLabel = value => new Date(value).toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short' });
@@ -39,25 +42,114 @@ async function refresh() {
 }
 function applyWorkspace(data) {
   meetings = data.meetings;
+  artifacts = data.artifacts;
   categories = data.categories;
   if (!categories.some(category => String(category.id) === selectedCategory)) selectedCategory = '';
   renderNav();
   renderList();
+  renderArtifactList();
 }
 function renderNav() {
+  const isArtifacts = currentView === 'artifacts';
+  categories.forEach(category => {
+    category.count = meetings.filter(meeting => meeting.category_id === category.id).length;
+    category.artifact_count = artifacts.filter(artifact => artifact.category_id === category.id).length;
+  });
   $('#totalCount').textContent = meetings.length;
-  $('#allMeetings').classList.toggle('active', !selectedCategory);
-  $('#categoryNav').innerHTML = categories.map(category => `<button class="nav-item category-item ${selectedCategory === String(category.id) ? 'active' : ''}" data-category="${category.id}"><span class="category-dot" style="--category-color:${category.color}"></span><span class="category-name">${escapeHtml(category.name)}</span><span class="nav-count">${category.count}</span></button>`).join('');
+  $('#artifactTotalCount').textContent = artifacts.length;
+  $('#allMeetings').classList.toggle('active', !isArtifacts && !selectedCategory);
+  $('#allArtifacts').classList.toggle('active', isArtifacts);
+  $('#categoryNav').innerHTML = categories.map(category => `<button class="nav-item category-item ${selectedCategory === String(category.id) ? 'active' : ''}" data-category="${category.id}"><span class="category-dot" style="--category-color:${category.color}"></span><span class="category-name">${escapeHtml(category.name)}</span><span class="nav-count">${isArtifacts ? category.artifact_count : category.count}</span></button>`).join('');
   $('#categoryFilter').innerHTML = '<option value="">전체 카테고리</option>' + categories.map(category => `<option value="${category.id}">${escapeHtml(category.name)}</option>`).join('');
   $('#categoryFilter').value = selectedCategory;
-  const title = categories.find(category => String(category.id) === selectedCategory)?.name || '전체 회의록';
+  $('#artifactCategoryFilter').innerHTML = $('#categoryFilter').innerHTML;
+  $('#artifactCategoryFilter').value = selectedCategory;
+  const categoryName = categories.find(category => String(category.id) === selectedCategory)?.name;
+  const title = isArtifacts ? (categoryName ? `${categoryName} 산출물` : '전체 산출물') : categoryName || '전체 회의록';
   $('#pageTitle').textContent = title;
   $('#breadcrumbTitle').textContent = title;
+  $('#pageEyebrow').textContent = isArtifacts ? 'DELIVERABLE ARCHIVE' : 'MEETING ARCHIVE';
+  $('#pageDescription').textContent = isArtifacts ? '팀의 산출물을 정리하고, 필요한 자료로 바로 연결하세요.' : '함께 나눈 생각을 기록하고, 다음 실행으로 연결하세요.';
+  ['meetingStats', 'meetingArchive', 'newMeeting'].forEach(id => { $(`#${id}`).hidden = isArtifacts; });
+  ['artifactStats', 'artifactArchive', 'newArtifact'].forEach(id => { $(`#${id}`).hidden = !isArtifacts; });
   const scope = meetings.filter(meeting => !selectedCategory || String(meeting.category_id) === selectedCategory);
   $('#statTotal').innerHTML = `${scope.length}<small>건</small>`;
   $('#statMonth').innerHTML = `${scope.filter(meeting => meeting.starts_at.startsWith(localDate().slice(0, 7))).length}<small>건</small>`;
   $('#statActions').innerHTML = `${scope.reduce((count, meeting) => count + meeting.actions.filter(action => !action.done).length, 0)}<small>개</small>`;
   $('#statCategories').innerHTML = `${categories.length}<small>개</small>`;
+  const artifactScope = artifacts.filter(artifact => !selectedCategory || String(artifact.category_id) === selectedCategory);
+  $('#statArtifactTotal').innerHTML = `${artifactScope.length}<small>건</small>`;
+  $('#statArtifactMonth').innerHTML = `${artifactScope.filter(artifact => localDate(new Date(artifact.created_at)).startsWith(localDate().slice(0, 7))).length}<small>건</small>`;
+  $('#statArtifactCategories').innerHTML = `${new Set(artifactScope.map(artifact => artifact.category_id)).size}<small>개</small>`;
+}
+function switchView(view) {
+  currentView = view; selectedCategory = ''; page = 1; artifactPage = 1;
+  renderNav(); renderList(); renderArtifactList();
+}
+function artifactLink(artifact, label = artifact.url, className = 'artifact-url') {
+  try {
+    const url = normalizeArtifactUrl(artifact.url);
+    return `<a class="${className}" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" aria-label="산출물 URL 열기 (새 탭)"><span>${escapeHtml(label)}</span>${icon('external')}</a>`;
+  } catch { return '<span class="muted">URL 주소를 수정해 주세요.</span>'; }
+}
+function filteredArtifacts() {
+  const query = $('#artifactSearch').value.trim().toLocaleLowerCase();
+  return artifacts.filter(artifact => (!selectedCategory || String(artifact.category_id) === selectedCategory) && (!query || [artifact.content, artifact.url, artifact.category_name].join(' ').toLocaleLowerCase().includes(query)))
+    .sort((a, b) => ($('#artifactSort').value === 'asc' ? 1 : -1) * (a.updated_at.localeCompare(b.updated_at) || a.id - b.id));
+}
+function renderArtifactList() {
+  const filtered = filteredArtifacts();
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  artifactPage = Math.min(artifactPage, pageCount);
+  $('#artifactResultCount').textContent = filtered.length;
+  $('#artifactListSummary').textContent = `전체 ${filtered.length}개의 산출물${filtered.length ? ` · ${(artifactPage - 1) * pageSize + 1}–${Math.min(artifactPage * pageSize, filtered.length)}개 표시` : ''}`;
+  $('#artifactPageInfo').textContent = `${artifactPage} / ${pageCount}`;
+  $('#artifactPrevPage').disabled = artifactPage === 1;
+  $('#artifactNextPage').disabled = artifactPage === pageCount;
+  if (!filtered.length) {
+    const hasFilter = selectedCategory || $('#artifactSearch').value;
+    $('#artifactList').innerHTML = `<div class="empty-state"><div class="empty-art"><span class="empty-sheet">${icon('link')}<i></i><i></i></span><span class="empty-spark">+</span></div><h3>${hasFilter ? '조건에 맞는 산출물이 없어요' : '우리 팀의 산출물을 모아 보세요'}</h3><p>${hasFilter ? '검색어나 카테고리를 변경해 보세요.' : '카테고리와 내용, URL만 입력하면 필요한 자료를 바로 찾을 수 있어요.'}</p><button class="button primary" id="artifactEmptyAction">${icon(hasFilter ? 'search' : 'plus')}${hasFilter ? '검색 조건 초기화' : '첫 산출물 추가하기'}</button></div>`;
+    $('#artifactEmptyAction').onclick = () => {
+      if (!hasFilter) { openArtifactEditor(); return; }
+      selectedCategory = ''; artifactPage = 1; $('#artifactSearch').value = ''; renderNav(); renderArtifactList();
+    };
+    return;
+  }
+  $('#artifactList').innerHTML = `<div class="table-wrap"><table class="artifact-table"><thead><tr><th>카테고리 / 산출물의 내용</th><th>산출물 URL 주소</th><th>수정일</th><th>관리</th></tr></thead><tbody>${filtered.slice((artifactPage - 1) * pageSize, artifactPage * pageSize).map(artifact => `<tr><td><button class="meeting-link artifact-content-link" data-artifact="${artifact.id}" aria-label="산출물 상세 보기: ${escapeHtml(artifact.content.slice(0, 60))}"><span class="category-badge" style="--category-color:${artifact.category_color}">${escapeHtml(artifact.category_name)}</span><strong>${escapeHtml(artifact.content)}</strong><span class="meeting-excerpt">내용 전체 보기</span></button></td><td>${artifactLink(artifact)}</td><td class="date-cell">${escapeHtml(dateLabel(artifact.updated_at))}</td><td><div class="artifact-row-actions"><button class="icon-button" data-artifact-edit="${artifact.id}" aria-label="산출물 수정" title="수정">${icon('edit')}</button><button class="icon-button category-delete" data-artifact-delete="${artifact.id}" aria-label="산출물 삭제" title="삭제">${icon('trash')}</button></div></td></tr>`).join('')}</tbody></table></div>`;
+}
+function openArtifactEditor(artifact = null) {
+  if (!categories.length) { toast('먼저 카테고리를 추가해 주세요.'); openCategories(); return; }
+  $('#artifactDialogContent').innerHTML = `<div class="dialog-header"><div><div class="eyebrow">DELIVERABLE</div><h2>${artifact ? '산출물 수정' : '산출물 추가'}</h2></div><button class="icon-button" data-close="artifactDialog" aria-label="닫기">${icon('close')}</button></div><form id="artifactForm"><div class="form-body"><div class="form-grid"><label class="span-two">카테고리 <span class="required">*</span><select name="category_id" required>${categories.map(category => `<option value="${category.id}" ${String(category.id) === String(artifact?.category_id || selectedCategory) ? 'selected' : ''}>${escapeHtml(category.name)}</option>`).join('')}</select></label></div><label class="form-section-label" for="artifactContentInput">산출물의 내용 <span class="required">*</span><textarea id="artifactContentInput" name="content" required maxlength="50000" rows="7" placeholder="산출물의 이름과 주요 내용을 입력하세요.">${escapeHtml(artifact?.content)}</textarea></label><label class="form-section-label artifact-url-field" for="artifactUrlInput">산출물 URL 주소 <span class="required">*</span><input id="artifactUrlInput" name="url" type="text" inputmode="url" required maxlength="4096" value="${escapeHtml(artifact?.url)}" placeholder="https://example.com/document" aria-describedby="artifactUrlHint"></label><p class="field-hint" id="artifactUrlHint">웹 주소를 입력하세요. https://가 없으면 자동으로 추가됩니다. 링크는 새 탭에서 열립니다.</p><p id="artifactFormError" class="form-error" role="alert"></p></div><div class="dialog-actions sticky-actions"><span class="field-hint"><span class="required">*</span> 필수 입력 항목</span><button class="button" type="button" data-close="artifactDialog">취소</button><button class="button primary" type="submit">${artifact ? '수정 사항 저장' : '산출물 등록'}</button></div></form>`;
+  showDialog('artifactDialog');
+  $('#artifactForm').onsubmit = async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const body = Object.fromEntries(new FormData(form));
+    if (artifact) body.version = artifact.version;
+    const button = form.querySelector('[type="submit"]'); button.disabled = true;
+    try {
+      const saved = await api(`/api/artifacts${artifact ? `/${artifact.id}` : ''}`, artifact ? 'PUT' : 'POST', body);
+      const category = categories.find(item => item.id === saved.category_id);
+      artifacts = [...artifacts.filter(item => item.id !== saved.id), { ...saved, category_name: category?.name || '미분류', category_color: category?.color || '#75839a' }];
+      renderNav(); renderArtifactList(); openArtifactDetail(saved.id);
+      toast(artifact ? '산출물을 수정했습니다.' : '산출물을 등록했습니다.');
+    } catch (error) { $('#artifactFormError').textContent = error.message; button.disabled = false; }
+  };
+}
+function openArtifactDetail(id) {
+  const artifact = artifacts.find(item => item.id === Number(id));
+  if (!artifact) return;
+  $('#artifactDialogContent').innerHTML = `<div class="dialog-header detail-heading"><div><span class="category-badge" style="--category-color:${artifact.category_color}">${escapeHtml(artifact.category_name)}</span><h2>산출물 상세</h2></div><button class="icon-button" data-close="artifactDialog" aria-label="닫기">${icon('close')}</button></div><div class="detail-meta"><span>등록 ${escapeHtml(dateLabel(artifact.created_at))}</span><span>수정 ${escapeHtml(dateLabel(artifact.updated_at))}</span></div><div class="detail-body"><section><h3>산출물의 내용</h3><div class="prose">${escapeHtml(artifact.content)}</div></section><section><h3>산출물 URL 주소</h3>${artifactLink(artifact, artifact.url, 'artifact-url artifact-detail-url')}<p class="field-hint">URL을 클릭하면 산출물이 새 탭에서 열립니다.</p></section></div><div class="dialog-actions sticky-actions"><button class="button danger-text" data-artifact-delete="${artifact.id}">${icon('trash')}삭제</button><span class="action-spacer"></span><button class="button" data-close="artifactDialog">닫기</button><button class="button primary" data-artifact-edit="${artifact.id}">${icon('edit')}수정하기</button></div>`;
+  showDialog('artifactDialog');
+}
+async function deleteArtifact(id) {
+  const artifact = artifacts.find(item => item.id === Number(id));
+  if (!artifact || !await confirmDelete('산출물을 삭제할까요?', `‘${artifact.content.slice(0, 80)}’ 산출물의 등록 정보가 삭제됩니다. 연결된 원본 자료는 유지됩니다.`)) return;
+  try {
+    await api(`/api/artifacts/${artifact.id}`, 'DELETE', { version: artifact.version });
+    artifacts = artifacts.filter(item => item.id !== artifact.id);
+    $('#artifactDialog').close(); renderNav(); renderArtifactList(); toast('산출물을 삭제했습니다.');
+  } catch (error) { toast(error.message, true); }
 }
 function filteredMeetings() {
   const query = $('#searchInput').value.trim().toLocaleLowerCase();
@@ -167,7 +259,7 @@ function openDetail(id) {
   }; });
 }
 function renderCategoryEditor() {
-  $('#categoryEditor').innerHTML = categories.map(category => `<form class="category-editor-row" data-category-edit="${category.id}"><input type="color" name="color" value="${category.color}" aria-label="${escapeHtml(category.name)} 색상"><input name="name" required maxlength="60" value="${escapeHtml(category.name)}" aria-label="카테고리 이름"><span class="muted category-meeting-count">${category.count}건</span><button class="icon-button" type="submit" aria-label="${escapeHtml(category.name)} 저장" title="저장">${icon('check')}</button><button class="icon-button category-delete" type="button" data-category-delete="${category.id}" aria-label="${escapeHtml(category.name)} 삭제" title="삭제">${icon('trash')}</button></form>`).join('');
+  $('#categoryEditor').innerHTML = categories.map(category => `<form class="category-editor-row" data-category-edit="${category.id}"><input type="color" name="color" value="${category.color}" aria-label="${escapeHtml(category.name)} 색상"><input name="name" required maxlength="60" value="${escapeHtml(category.name)}" aria-label="카테고리 이름"><span class="muted category-meeting-count" title="회의록 ${category.count}건 · 산출물 ${category.artifact_count}건">회의 ${category.count}<br>산출물 ${category.artifact_count}</span><button class="icon-button" type="submit" aria-label="${escapeHtml(category.name)} 저장" title="저장">${icon('check')}</button><button class="icon-button category-delete" type="button" data-category-delete="${category.id}" aria-label="${escapeHtml(category.name)} 삭제" title="삭제">${icon('trash')}</button></form>`).join('');
 }
 function openCategories() { renderCategoryEditor(); showDialog('categoryDialog'); }
 $('#categoryEditor').onsubmit = async event => {
@@ -179,7 +271,7 @@ $('#categoryEditor').onsubmit = async event => {
 $('#categoryEditor').onclick = async event => {
   const button = event.target.closest('[data-category-delete]'); if (!button) return;
   const category = categories.find(item => item.id === Number(button.dataset.categoryDelete));
-  if (category.count) { toast('회의록의 카테고리를 먼저 변경한 후 삭제해 주세요.', true); return; }
+  if (category.count || category.artifact_count) { toast('등록된 회의록과 산출물의 카테고리를 먼저 변경한 후 삭제해 주세요.', true); return; }
   if (!await confirmDelete('카테고리를 삭제할까요?', `‘${category.name}’ 카테고리가 삭제됩니다.`)) return;
   try { await api(`/api/categories/${category.id}`, 'DELETE'); await refresh(); renderCategoryEditor(); toast('카테고리를 삭제했습니다.'); } catch (error) { toast(error.message, true); }
 };
@@ -191,12 +283,27 @@ document.addEventListener('click', event => {
   const close = event.target.closest('[data-close]');
   if (close) $(`#${close.dataset.close}`).close();
   const category = event.target.closest('[data-category]');
-  if (category) { selectedCategory = category.dataset.category; page = 1; renderNav(); renderList(); }
+  if (category) { selectedCategory = category.dataset.category; page = 1; artifactPage = 1; renderNav(); renderList(); renderArtifactList(); }
   const meeting = event.target.closest('[data-meeting]');
   if (meeting) openDetail(meeting.dataset.meeting);
+  const artifact = event.target.closest('[data-artifact]');
+  if (artifact) openArtifactDetail(artifact.dataset.artifact);
+  const editArtifact = event.target.closest('[data-artifact-edit]');
+  if (editArtifact) {
+    const item = artifacts.find(item => item.id === Number(editArtifact.dataset.artifactEdit));
+    if (item) openArtifactEditor(item);
+  }
+  const removeArtifact = event.target.closest('[data-artifact-delete]');
+  if (removeArtifact) deleteArtifact(removeArtifact.dataset.artifactDelete);
 });
 $('#newMeeting').onclick = () => openEditor();
-$('#allMeetings').onclick = () => { selectedCategory = ''; page = 1; renderNav(); renderList(); };
+$('#allMeetings').onclick = () => switchView('meetings');
+$('#allArtifacts').onclick = () => switchView('artifacts');
+$('#newArtifact').onclick = () => openArtifactEditor();
+$('#artifactCategoryFilter').onchange = event => { selectedCategory = event.target.value; artifactPage = 1; renderNav(); renderArtifactList(); };
+['artifactSearch', 'artifactSort'].forEach(id => { $(`#${id}`).addEventListener('input', () => { artifactPage = 1; renderArtifactList(); }); });
+$('#artifactPrevPage').onclick = () => { artifactPage--; renderArtifactList(); };
+$('#artifactNextPage').onclick = () => { artifactPage++; renderArtifactList(); };
 $('#manageCategories').onclick = openCategories;
 $('#addCategory').onclick = openCategories;
 $('#categoryFilter').onchange = event => { selectedCategory = event.target.value; page = 1; renderNav(); renderList(); };
@@ -205,7 +312,7 @@ $('#periodFilter').onchange = () => { $('#dateRange').hidden = $('#periodFilter'
 $('#resetDates').onclick = () => { $('#fromDate').value = ''; $('#toDate').value = ''; page = 1; renderList(); };
 $('#prevPage').onclick = () => { page--; renderList(); };
 $('#nextPage').onclick = () => { page++; renderList(); };
-document.addEventListener('keydown', event => { if (event.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && !document.querySelector('dialog[open]')) { event.preventDefault(); $('#searchInput').focus(); } });
+document.addEventListener('keydown', event => { if (event.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && !document.querySelector('dialog[open]') && !$('#workspaceApp').hidden) { event.preventDefault(); $(currentView === 'artifacts' ? '#artifactSearch' : '#searchInput').focus(); } });
 $('#todayLabel').textContent = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' });
 hydrateIcons();
 let stopWatching = () => {};
@@ -240,7 +347,7 @@ try {
     const generation = ++authGeneration;
     stopWatching();
     document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
-    meetings = []; categories = [];
+    meetings = []; artifacts = []; categories = [];
     $('#workspaceApp').hidden = true;
     $('#authScreen').hidden = false;
     authReady = true;
@@ -249,7 +356,7 @@ try {
     if (user.email !== workspaceAccountEmail) {
       await logout(); return;
     }
-    $('#authMessage').textContent = '저장된 회의록을 불러오고 있습니다…';
+    $('#authMessage').textContent = '저장된 회의록과 산출물을 불러오고 있습니다…';
     try {
       await ensureWorkspace();
       if (generation !== authGeneration) return;

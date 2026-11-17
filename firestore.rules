@@ -7,14 +7,34 @@ service cloud.firestore {
     match /users/{userId}/workspace/config {
       allow read: if isOwner(userId);
       allow create, update: if isOwner(userId)
-        && request.resource.data.keys().hasOnly(['categories', 'nextMeetingId', 'nextCategoryId', 'version'])
+        && request.resource.data.keys().hasOnly(['categories', 'nextMeetingId', 'nextArtifactId', 'nextCategoryId', 'version'])
         && request.resource.data.categories is list
         && request.resource.data.categories.size() <= 100
         && request.resource.data.nextMeetingId is int
         && request.resource.data.nextMeetingId > 0
         && request.resource.data.nextCategoryId is int
         && request.resource.data.nextCategoryId > 0
+        && (!('nextArtifactId' in request.resource.data) || (request.resource.data.nextArtifactId is int && request.resource.data.nextArtifactId > 0))
         && request.resource.data.version is int;
+    }
+    match /users/{userId}/artifacts/{artifactId} {
+      allow read, delete: if isOwner(userId);
+      allow create, update: if isOwner(userId)
+        && request.resource.data.keys().hasOnly(['id', 'category_id', 'content', 'url', 'created_at', 'updated_at', 'version'])
+        && request.resource.data.id is int
+        && artifactId == string(request.resource.data.id)
+        && request.resource.data.category_id is int
+        && exists(/databases/$(database)/documents/users/$(userId)/workspace/config)
+        && request.resource.data.content is string
+        && request.resource.data.content.size() > 0
+        && request.resource.data.content.size() <= 50000
+        && request.resource.data.url is string
+        && request.resource.data.url.size() <= 4096
+        && request.resource.data.url.matches('^https?://[^/\\s]+.*$')
+        && request.resource.data.created_at is string
+        && request.resource.data.updated_at is string
+        && request.resource.data.version is int
+        && request.resource.data.version > 0;
     }
     match /users/{userId}/meetings/{meetingId} {
       allow read, delete: if isOwner(userId);
