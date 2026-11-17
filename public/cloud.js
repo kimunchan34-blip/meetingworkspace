@@ -1,9 +1,10 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-app.js';
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, onAuthStateChanged, signOut, setPersistence, browserSessionPersistence } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js';
+import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut, setPersistence, browserSessionPersistence } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js';
 import { getFirestore, doc, collection, getDocFromServer, getDocsFromServer, onSnapshot, runTransaction } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js';
 import { firebaseConfig } from './firebase-config.js';
 
 let auth, db;
+export const workspaceAccountEmail = 'workspace-access@meetingworkspace.invalid';
 const defaultNames = ['추진반 회의', '부서내부 회의', 'P-DX 회의', 'PI 데이터거버넌스', 'PI 데이터레이크하우스', 'PI MDM', 'PI ODM'];
 const defaultColors = ['#7762ca', '#468b78', '#5083c6', '#d39343', '#5b9fa7', '#b56c91', '#75839a'];
 function references() {
@@ -13,17 +14,13 @@ function references() {
 }
 export function friendlyError(error) {
   const messages = {
-    'auth/invalid-email': '올바른 이메일 주소를 입력해 주세요.',
-    'auth/invalid-credential': '이메일 또는 비밀번호를 확인해 주세요. 비밀번호를 처음 설정하는 경우 아래 설정 메뉴를 이용해 주세요.',
-    'auth/wrong-password': '이메일 또는 비밀번호를 확인해 주세요.',
-    'auth/user-not-found': '이메일 또는 비밀번호를 확인해 주세요.',
-    'auth/email-already-in-use': '이미 등록된 이메일입니다. 로그인하거나 비밀번호 설정·재설정을 이용해 주세요.',
-    'auth/weak-password': '비밀번호는 6자 이상으로 입력해 주세요.',
-    'auth/password-does-not-meet-requirements': '비밀번호가 계정 보안 조건을 충족하지 않습니다. 더 긴 비밀번호에 영문, 숫자, 특수문자를 함께 사용해 주세요.',
+    'auth/invalid-credential': '접속 비밀번호가 올바르지 않습니다.',
+    'auth/wrong-password': '접속 비밀번호가 올바르지 않습니다.',
+    'auth/user-not-found': '접속 계정을 찾을 수 없습니다. 관리자에게 문의해 주세요.',
     'auth/too-many-requests': '요청이 많습니다. 잠시 후 다시 시도해 주세요.',
     'auth/user-disabled': '사용이 중지된 계정입니다. 관리자에게 문의해 주세요.',
     'auth/unauthorized-domain': '이 주소에서 로그인할 수 없습니다. Firebase 인증 도메인 설정을 확인해 주세요.',
-    'auth/operation-not-allowed': '이메일 로그인을 사용할 수 없습니다. 관리자에게 문의해 주세요.',
+    'auth/operation-not-allowed': '접속 기능을 사용할 수 없습니다. 관리자에게 문의해 주세요.',
     'auth/configuration-not-found': 'Firebase Authentication 설정이 필요합니다.',
     'auth/network-request-failed': '네트워크 연결을 확인한 후 다시 시도해 주세요.',
     'permission-denied': '회의록 접근 권한을 확인할 수 없습니다. 다시 로그인해 주세요.',
@@ -39,11 +36,11 @@ export async function initializeCloud(onUser) {
   auth.languageCode = 'ko';
   onAuthStateChanged(auth, onUser);
 }
-export function login(email, password) {
-  return signInWithEmailAndPassword(auth, email.trim(), password);
+export async function login(pin) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`meetingworkspace:${pin}`));
+  const password = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+  return signInWithEmailAndPassword(auth, workspaceAccountEmail, password);
 }
-export function createAccount(email, password) { return createUserWithEmailAndPassword(auth, email.trim(), password); }
-export function resetPassword(email) { return sendPasswordResetEmail(auth, email.trim()); }
 export function logout() { return signOut(auth); }
 export async function ensureWorkspace() {
   const { config } = references();
