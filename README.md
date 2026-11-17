@@ -4,7 +4,9 @@
 
 Firebase Hosting과 Cloud Firestore를 사용하는 회의록 관리 시스템입니다.
 
-GitHub Pages 서비스 주소는 https://kimunchan34-blip.github.io/meetingworkspace/ 입니다. Firebase Hosting 주소는 https://meetingworkspace-53ce4.web.app 입니다. Google 계정으로 로그인하면 같은 계정의 회의록을 PC와 모바일에서 조회할 수 있습니다. 데이터는 계정별로 저장되며 Firestore 보안 규칙에서 소유자를 확인합니다.
+GitHub Pages 서비스 주소는 https://kimunchan34-blip.github.io/meetingworkspace/ 입니다. Firebase Hosting 주소는 https://meetingworkspace-53ce4.web.app 입니다. 이메일과 비밀번호로 로그인하면 같은 계정의 회의록을 PC와 모바일에서 조회할 수 있습니다. 데이터는 계정별로 저장되며 Firestore 보안 규칙에서 소유자를 확인합니다.
+
+처음 사용하는 이메일은 로그인 화면의 계정 만들기로 등록합니다. 기존 계정은 같은 이메일로 비밀번호 설정·재설정을 진행한 후 로그인하세요. 브라우저 세션 동안 로그인을 유지하며, 로그아웃은 화면 왼쪽 하단에서 할 수 있습니다.
 
 Firebase 프로젝트 ID는 `meetingworkspace-53ce4`이며 Firestore 위치는 서울 `asia-northeast3`입니다. 기본 카테고리는 첫 로그인 시 생성합니다.
 
@@ -24,7 +26,7 @@ npm start
 - Action Item 담당자, 마감일, 완료 상태 관리
 - 회의 목록과 상세 조회, 통합 검색, 카테고리 및 기간 필터, 정렬과 페이지 이동
 - Cloud Firestore 영구 저장 및 다른 기기의 변경 내용 실시간 반영
-- Google 로그인과 계정별 접근 권한
+- 이메일·비밀번호 로그인, 계정 만들기, 비밀번호 설정·재설정과 계정별 접근 권한
 - 동시 수정 충돌 확인
 
 회의 시간은 입력한 로컬 시간을 기준으로 저장합니다. 회의록이 등록된 카테고리는 해당 회의록의 카테고리를 먼저 변경한 후 삭제할 수 있습니다. 인터넷 연결이 있어야 저장할 수 있으며, 저장 실패 시 입력 창을 유지합니다.
@@ -35,7 +37,7 @@ npm start
 
 ## Firebase 설정과 배포
 
-Firebase 콘솔 Authentication에서 Google 로그인 제공자를 사용 설정해야 합니다. 인증 승인 도메인에 `kimunchan34-blip.github.io`, `meetingworkspace-53ce4.web.app`, `meetingworkspace-53ce4.firebaseapp.com`과 로컬 미리보기를 위한 `localhost`를 등록합니다.
+Firebase 콘솔 Authentication에서 이메일/비밀번호 로그인 제공자를 사용 설정합니다. 인증 승인 도메인에 `kimunchan34-blip.github.io`, `meetingworkspace-53ce4.web.app`, `meetingworkspace-53ce4.firebaseapp.com`과 로컬 미리보기를 위한 `localhost`를 등록합니다.
 
 ## GitHub Pages 배포
 

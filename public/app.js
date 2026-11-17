@@ -1,4 +1,4 @@
-import { initializeCloud, login, logout, ensureWorkspace, fetchWorkspace, watchWorkspace, request, friendlyError } from './cloud.js';
+import { initializeCloud, login, createAccount, resetPassword, logout, ensureWorkspace, fetchWorkspace, watchWorkspace, request, friendlyError } from './cloud.js';
 
 const $ = selector => document.querySelector(selector);
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -210,12 +210,54 @@ $('#todayLabel').textContent = new Date().toLocaleDateString('ko-KR', { year: 'n
 hydrateIcons();
 let stopWatching = () => {};
 let authGeneration = 0;
-$('#loginButton').onclick = async () => {
-  $('#loginButton').disabled = true;
-  $('#authMessage').textContent = 'Google 로그인 창에서 계정을 선택해 주세요.';
-  try { await login(); }
-  catch (error) { $('#authMessage').textContent = friendlyError(error); }
-  finally { $('#loginButton').disabled = false; }
+let authMode = 'login';
+let authReady = false;
+function setAuthBusy(busy) {
+  ['loginButton', 'signupButton', 'resetPasswordButton'].forEach(id => { $(`#${id}`).disabled = busy || !authReady; });
+  ['authEmail', 'authPassword', 'authPasswordConfirm'].forEach(id => { $(`#${id}`).disabled = busy; });
+}
+function setAuthMode(mode) {
+  authMode = mode;
+  const signup = mode === 'signup';
+  const reset = mode === 'reset';
+  $('#authTitle').textContent = reset ? '비밀번호 설정·재설정' : signup ? '새 계정 만들기' : '회의록 관리 로그인';
+  $('#authDescription').innerHTML = reset ? '등록한 이메일로 비밀번호 설정 링크를 보내드립니다.<br>처음 비밀번호를 설정할 때도 이용하세요.' : signup ? '회의록을 관리할 이메일과<br>6자 이상의 비밀번호를 입력하세요.' : '이메일과 비밀번호로 로그인하고<br>어디서든 회의 기록을 확인하세요.';
+  $('#passwordField').hidden = reset;
+  $('#authPassword').required = !reset;
+  $('#authPassword').minLength = signup ? 6 : 1;
+  $('#authPassword').autocomplete = signup ? 'new-password' : 'current-password';
+  $('#authPassword').value = '';
+  $('#passwordConfirmField').hidden = !signup;
+  $('#authPasswordConfirm').required = signup;
+  $('#authPasswordConfirm').value = '';
+  $('#loginButton').textContent = reset ? '설정 링크 보내기' : signup ? '계정 만들기' : '로그인';
+  $('#signupButton').textContent = mode === 'login' ? '계정 만들기' : '로그인으로 돌아가기';
+  $('#resetPasswordButton').hidden = reset;
+  $('#authMessage').textContent = '';
+}
+$('#signupButton').onclick = () => setAuthMode(authMode === 'login' ? 'signup' : 'login');
+$('#resetPasswordButton').onclick = () => setAuthMode('reset');
+$('#authForm').onsubmit = async event => {
+  event.preventDefault();
+  const email = $('#authEmail').value.trim();
+  const password = $('#authPassword').value;
+  if (authMode === 'signup' && password !== $('#authPasswordConfirm').value) {
+    $('#authMessage').textContent = '비밀번호가 일치하지 않습니다.';
+    $('#authPasswordConfirm').focus(); return;
+  }
+  setAuthBusy(true);
+  $('#authMessage').textContent = authMode === 'reset' ? '설정 링크를 요청하고 있습니다…' : '계정을 확인하고 있습니다…';
+  try {
+    if (authMode === 'reset') {
+      await resetPassword(email);
+      $('#authMessage').textContent = '등록된 계정이면 비밀번호 설정 메일이 발송됩니다. 받은편지함과 스팸함을 확인해 주세요.';
+    } else {
+      if (authMode === 'signup') await createAccount(email, password);
+      else await login(email, password);
+      $('#authPassword').value = ''; $('#authPasswordConfirm').value = '';
+    }
+  } catch (error) { $('#authMessage').textContent = friendlyError(error); }
+  finally { setAuthBusy(false); }
 };
 $('#logoutButton').onclick = async () => {
   try { await logout(); } catch (error) { toast(friendlyError(error), true); }
@@ -234,8 +276,12 @@ try {
     meetings = []; categories = [];
     $('#workspaceApp').hidden = true;
     $('#authScreen').hidden = false;
-    $('#loginButton').disabled = false;
-    if (!user) { $('#authMessage').textContent = '회의록은 계정별로 안전하게 보관됩니다.'; return; }
+    authReady = true;
+    setAuthBusy(false);
+    if (!user) { setAuthMode('login'); $('#authMessage').textContent = '기존 계정의 비밀번호를 처음 설정하려면 비밀번호 설정·재설정을 이용하세요.'; return; }
+    if (!user.providerData.some(provider => provider.providerId === 'password')) {
+      await logout(); return;
+    }
     $('#authMessage').textContent = '저장된 회의록을 불러오고 있습니다…';
     try {
       await ensureWorkspace();
@@ -250,5 +296,5 @@ try {
   });
 } catch (error) {
   $('#authMessage').textContent = friendlyError(error);
-  $('#loginButton').disabled = true;
+  authReady = false; setAuthBusy(false);
 }

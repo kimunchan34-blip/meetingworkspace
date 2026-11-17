@@ -8,7 +8,19 @@
 </head>
 <body>
   <section class="auth-screen" id="authScreen">
-    <div class="auth-card"><span class="brand-mark">m<span>o</span></span><div class="eyebrow">MEETING WORKSPACE</div><h1>어디서든 이어지는<br>우리의 회의 기록</h1><p>같은 Google 계정으로 로그인하면<br>모든 기기에서 회의록을 확인할 수 있어요.</p><button class="button primary" id="loginButton" disabled>Google 계정으로 시작하기</button><p id="authMessage" role="status">클라우드에 연결하고 있습니다…</p></div>
+    <div class="auth-card">
+      <span class="brand-mark">m<span>o</span></span><div class="eyebrow">MEETING WORKSPACE</div>
+      <h1 id="authTitle">회의록 관리 로그인</h1>
+      <p id="authDescription">이메일과 비밀번호로 로그인하고<br>어디서든 회의 기록을 확인하세요.</p>
+      <form id="authForm" class="auth-form">
+        <label>이메일<input id="authEmail" name="email" type="email" autocomplete="username" placeholder="이메일 주소를 입력하세요" required maxlength="254"></label>
+        <label id="passwordField">비밀번호<input id="authPassword" name="password" type="password" autocomplete="current-password" placeholder="비밀번호를 입력하세요" required maxlength="4096"></label>
+        <label id="passwordConfirmField" hidden>비밀번호 확인<input id="authPasswordConfirm" type="password" autocomplete="new-password" placeholder="비밀번호를 다시 입력하세요" maxlength="4096"></label>
+        <button class="button primary" id="loginButton" type="submit" disabled>로그인</button>
+      </form>
+      <div class="auth-links"><button class="text-button" id="signupButton" type="button" disabled>계정 만들기</button><button class="text-button" id="resetPasswordButton" type="button" disabled>비밀번호 설정·재설정</button></div>
+      <p id="authMessage" role="status">클라우드에 연결하고 있습니다…</p>
+    </div>
   </section>
   <div id="workspaceApp" hidden>
   <aside class="sidebar">
