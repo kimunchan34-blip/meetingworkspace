@@ -1,5 +1,7 @@
 # 모아 회의록 관리
 
+회의 기록 부터 실행까지 관리
+
 Firebase Hosting과 Cloud Firestore를 사용하는 회의록 관리 시스템입니다.
 
 GitHub Pages 서비스 주소는 https://kimunchan34-blip.github.io/meetingworkspace/ 입니다. Firebase Hosting 주소는 https://meetingworkspace-53ce4.web.app 입니다. Google 계정으로 로그인하면 같은 계정의 회의록을 PC와 모바일에서 조회할 수 있습니다. 데이터는 계정별로 저장되며 Firestore 보안 규칙에서 소유자를 확인합니다.
