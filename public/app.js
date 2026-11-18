@@ -1,5 +1,5 @@
 import { initializeCloud, login, logout, ensureWorkspace, fetchWorkspace, watchWorkspace, request, friendlyError, workspaceAccountEmail } from './cloud.js';
-import { MAX_ARTIFACT_BATCH_SIZE, normalizeArtifactUrl } from './artifact-model.js';
+import { MAX_ARTIFACT_LINKS, artifactLinks, normalizeArtifactUrl } from './artifact-model.js';
 
 const $ = selector => document.querySelector(selector);
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -126,8 +126,13 @@ function artifactLink(artifact, label = artifact.url, className = 'artifact-url'
 }
 function filteredArtifacts() {
   const query = $('#artifactSearch').value.trim().toLocaleLowerCase();
-  return artifacts.filter(artifact => (!selectedCategory || String(artifact.category_id) === selectedCategory) && (!query || [artifact.content, artifact.url, artifact.category_name].join(' ').toLocaleLowerCase().includes(query)))
+  return artifacts.filter(artifact => (!selectedCategory || String(artifact.category_id) === selectedCategory) && (!query || [artifact.content, artifact.category_name, ...artifactLinks(artifact).flatMap(link => [link.name, link.url])].join(' ').toLocaleLowerCase().includes(query)))
     .sort((a, b) => ($('#artifactSort').value === 'asc' ? 1 : -1) * (a.updated_at.localeCompare(b.updated_at) || a.id - b.id));
+}
+function artifactLinkPreview(artifact) {
+  const links = artifactLinks(artifact);
+  if (!links.length) return '<span class="muted">등록된 링크가 없습니다.</span>';
+  return `<div class="artifact-list-links">${artifactLink(links[0], links[0].name)}${links.length > 1 ? `<button class="text-button" data-artifact="${artifact.id}" aria-label="산출물 링크 ${links.length}개 전체 보기">외 ${links.length - 1}개</button>` : ''}</div>`;
 }
 function renderArtifactList() {
   const pageSize = artifactPageSize;
@@ -149,55 +154,55 @@ function renderArtifactList() {
     };
     return;
   }
-  $('#artifactList').innerHTML = `<div class="table-wrap"><table class="artifact-table"><thead><tr><th>카테고리 / 산출물의 내용</th><th>산출물 URL 주소</th><th>수정일</th><th>관리</th></tr></thead><tbody>${filtered.slice((artifactPage - 1) * pageSize, artifactPage * pageSize).map(artifact => `<tr><td><button class="meeting-link artifact-content-link" data-artifact="${artifact.id}" aria-label="산출물 상세 보기: ${escapeHtml(artifact.content.slice(0, 60))}"><span class="category-badge" style="--category-color:${artifact.category_color}">${escapeHtml(artifact.category_name)}</span><strong>${escapeHtml(artifact.content)}</strong><span class="meeting-excerpt">내용 전체 보기</span></button></td><td>${artifactLink(artifact)}</td><td class="date-cell">${escapeHtml(dateLabel(artifact.updated_at))}</td><td><div class="artifact-row-actions"><button class="icon-button" data-artifact-edit="${artifact.id}" aria-label="산출물 수정" title="수정">${icon('edit')}</button><button class="icon-button category-delete" data-artifact-delete="${artifact.id}" aria-label="산출물 삭제" title="삭제">${icon('trash')}</button></div></td></tr>`).join('')}</tbody></table></div>`;
+  $('#artifactList').innerHTML = `<div class="table-wrap"><table class="artifact-table"><thead><tr><th>카테고리 / 산출물의 내용</th><th>산출물명 / URL</th><th>수정일</th><th>관리</th></tr></thead><tbody>${filtered.slice((artifactPage - 1) * pageSize, artifactPage * pageSize).map(artifact => `<tr><td><button class="meeting-link artifact-content-link" data-artifact="${artifact.id}" aria-label="산출물 상세 보기: ${escapeHtml(artifact.content.slice(0, 60))}"><span class="category-badge" style="--category-color:${artifact.category_color}">${escapeHtml(artifact.category_name)}</span><strong>${escapeHtml(artifact.content)}</strong><span class="meeting-excerpt">내용 전체 보기</span></button></td><td>${artifactLinkPreview(artifact)}</td><td class="date-cell">${escapeHtml(dateLabel(artifact.updated_at))}</td><td><div class="artifact-row-actions"><button class="icon-button" data-artifact-edit="${artifact.id}" aria-label="산출물 수정" title="수정">${icon('edit')}</button><button class="icon-button category-delete" data-artifact-delete="${artifact.id}" aria-label="산출물 삭제" title="삭제">${icon('trash')}</button></div></td></tr>`).join('')}</tbody></table></div>`;
 }
-function artifactEditorRow(key, artifact = null) {
+function artifactEditorRow(key, link) {
   return `<div class="artifact-editor-row" data-artifact-entry>
     <div class="artifact-entry-heading"><strong data-artifact-entry-title></strong><button class="icon-button category-delete" type="button" data-remove-artifact-entry title="입력 항목 삭제">${icon('trash')}</button></div>
-    <label class="form-section-label" for="artifactContentInput${key}">산출물명 <span class="required">*</span><textarea id="artifactContentInput${key}" name="content" required maxlength="50000" rows="2" placeholder="산출물명을 입력하세요.">${escapeHtml(artifact?.content)}</textarea></label>
-    <label class="form-section-label artifact-url-field" for="artifactUrlInput${key}">URL <span class="required">*</span><input id="artifactUrlInput${key}" name="url" type="text" inputmode="url" required maxlength="4096" value="${escapeHtml(artifact?.url)}" placeholder="https://example.com/document" aria-describedby="artifactUrlHint"></label>
+    <div class="artifact-link-fields"><label class="form-section-label artifact-url-field" for="artifactNameInput${key}">산출물명 <span class="required">*</span><input id="artifactNameInput${key}" name="link_name" type="text" required maxlength="200" value="${escapeHtml(link.name)}" placeholder="산출물명을 입력하세요."></label>
+    <label class="form-section-label artifact-url-field" for="artifactUrlInput${key}">산출물 URL <span class="required">*</span><input id="artifactUrlInput${key}" name="link_url" type="text" inputmode="url" required maxlength="4096" value="${escapeHtml(link.url)}" placeholder="https://example.com/document" aria-describedby="artifactUrlHint"></label></div>
   </div>`;
 }
 function openArtifactEditor(artifact = null) {
   if (!categories.length) { toast('먼저 카테고리를 추가해 주세요.'); openCategories(); return; }
+  const initialLinks = artifactLinks(artifact);
+  if (!initialLinks.length) initialLinks.push({ name: '', url: '' });
   $('#artifactDialogContent').innerHTML = `<div class="dialog-header"><div><div class="eyebrow">DELIVERABLE</div><h2>${artifact ? '산출물 수정' : '산출물 추가'}</h2></div><button class="icon-button" data-close="artifactDialog" aria-label="닫기">${icon('close')}</button></div>
     <form id="artifactForm"><div class="form-body"><fieldset class="artifact-fields"><div class="form-grid"><label class="span-two">카테고리 <span class="required">*</span><select name="category_id" required>${categories.map(category => `<option value="${category.id}" ${String(category.id) === String(artifact?.category_id || selectedCategory) ? 'selected' : ''}>${escapeHtml(category.name)}</option>`).join('')}</select></label></div>
-    ${artifact ? '' : `<p class="field-hint">선택한 카테고리에 산출물을 한 번에 ${MAX_ARTIFACT_BATCH_SIZE}개까지 등록할 수 있습니다. 각 항목의 산출물명과 URL을 입력하세요.</p>`}
-    <div id="artifactEntries">${artifactEditorRow(1, artifact)}</div>
-    ${artifact ? '' : `<div class="artifact-entry-actions"><button class="button" type="button" id="addArtifactEntry">${icon('plus')}산출물 추가</button><span class="field-hint" id="artifactEntryCount" role="status"></span></div>`}
+    <label class="form-section-label" for="artifactContentInput">산출물의 내용 <span class="required">*</span><textarea id="artifactContentInput" name="content" required maxlength="50000" rows="7" placeholder="산출물의 이름과 주요 내용을 입력하세요.">${escapeHtml(artifact?.content)}</textarea></label>
+    <p class="field-hint">산출물명과 URL을 최대 ${MAX_ARTIFACT_LINKS}개까지 추가할 수 있습니다.</p>
+    <div id="artifactEntries">${initialLinks.map((link, index) => artifactEditorRow(index + 1, link)).join('')}</div>
+    <div class="artifact-entry-actions"><button class="button" type="button" id="addArtifactEntry">${icon('plus')}산출물 링크 추가</button><span class="field-hint" id="artifactEntryCount" role="status"></span></div>
     </fieldset><p class="field-hint" id="artifactUrlHint">웹 주소를 입력하세요. https://가 없으면 자동으로 추가됩니다. 링크는 새 탭에서 열립니다.</p><p id="artifactFormError" class="form-error" role="alert"></p></div>
     <div class="dialog-actions sticky-actions"><span class="field-hint"><span class="required">*</span> 필수 입력 항목</span><button class="button" type="button" data-close="artifactDialog">취소</button><button class="button primary" type="submit">${artifact ? '수정 사항 저장' : '산출물 등록'}</button></div></form>`;
   const form = $('#artifactForm');
   const entries = $('#artifactEntries');
   const addButton = $('#addArtifactEntry');
-  let nextKey = 2;
+  let nextKey = initialLinks.length + 1;
   const updateEntries = () => {
     const rows = [...entries.children];
     rows.forEach((row, index) => {
       row.querySelector('[data-artifact-entry-title]').textContent = `산출물 ${index + 1}`;
       const removeButton = row.querySelector('[data-remove-artifact-entry]');
-      removeButton.hidden = Boolean(artifact) || rows.length === 1;
+      removeButton.hidden = rows.length === 1;
       removeButton.setAttribute('aria-label', `산출물 ${index + 1} 입력 항목 삭제`);
     });
-    if (addButton) {
-      addButton.disabled = rows.length >= MAX_ARTIFACT_BATCH_SIZE;
-      $('#artifactEntryCount').textContent = `${rows.length} / ${MAX_ARTIFACT_BATCH_SIZE}개`;
-      form.querySelector('[type="submit"]').textContent = `산출물 ${rows.length}건 등록`;
-    }
+    addButton.disabled = rows.length >= MAX_ARTIFACT_LINKS;
+    $('#artifactEntryCount').textContent = `${rows.length} / ${MAX_ARTIFACT_LINKS}개`;
   };
-  if (addButton) addButton.onclick = () => {
-    if (entries.children.length >= MAX_ARTIFACT_BATCH_SIZE) return;
-    entries.insertAdjacentHTML('beforeend', artifactEditorRow(nextKey++));
+  addButton.onclick = () => {
+    if (entries.children.length >= MAX_ARTIFACT_LINKS) return;
+    entries.insertAdjacentHTML('beforeend', artifactEditorRow(nextKey++, { name: '', url: '' }));
     updateEntries();
-    entries.lastElementChild.querySelector('textarea').focus();
+    entries.lastElementChild.querySelector('[name="link_name"]').focus();
   };
   entries.onclick = event => {
     const removeButton = event.target.closest('[data-remove-artifact-entry]');
-    if (!removeButton || artifact || entries.children.length === 1) return;
+    if (!removeButton || entries.children.length === 1) return;
     const row = removeButton.closest('[data-artifact-entry]');
     const nextRow = row.nextElementSibling || row.previousElementSibling;
     row.remove(); updateEntries();
-    nextRow.querySelector('textarea').focus();
+    nextRow.querySelector('[name="link_name"]').focus();
   };
   updateEntries();
   showDialog('artifactDialog');
@@ -206,25 +211,19 @@ function openArtifactEditor(artifact = null) {
     const fields = form.querySelector('fieldset');
     if (fields.disabled) return;
     const data = new FormData(form);
-    const items = [...entries.children].map(row => ({ content: row.querySelector('[name="content"]').value, url: row.querySelector('[name="url"]').value }));
-    const body = artifact ? { category_id: data.get('category_id'), ...items[0], version: artifact.version } : { category_id: data.get('category_id'), items };
+    const links = [...entries.children].map(row => ({ name: row.querySelector('[name="link_name"]').value, url: row.querySelector('[name="link_url"]').value }));
+    const body = { category_id: data.get('category_id'), content: data.get('content'), links };
+    if (artifact) body.version = artifact.version;
     const button = form.querySelector('[type="submit"]'); button.disabled = true;
     fields.disabled = true;
     $('#artifactFormError').textContent = '';
     try {
-      const response = await api(`/api/artifacts${artifact ? `/${artifact.id}` : ''}`, artifact ? 'PUT' : 'POST', body);
-      const saved = Array.isArray(response) ? response : [response];
-      const savedIds = new Set(saved.map(item => item.id));
-      artifacts = [...artifacts.filter(item => !savedIds.has(item.id)), ...saved.map(item => {
-        const category = categories.find(category => category.id === item.category_id);
-        return { ...item, category_name: category?.name || '미분류', category_color: category?.color || '#75839a' };
-      })];
+      const saved = await api(`/api/artifacts${artifact ? `/${artifact.id}` : ''}`, artifact ? 'PUT' : 'POST', body);
+      const category = categories.find(category => category.id === saved.category_id);
+      artifacts = [...artifacts.filter(item => item.id !== saved.id), { ...saved, category_name: category?.name || '미분류', category_color: category?.color || '#75839a' }];
       renderNav(); renderArtifactList();
-      if (form.isConnected) {
-        if (saved.length === 1) openArtifactDetail(saved[0].id);
-        else $('#artifactDialog').close();
-      }
-      toast(artifact ? '산출물을 수정했습니다.' : `산출물 ${saved.length}건을 등록했습니다.`);
+      if (form.isConnected && $('#artifactDialog').open) openArtifactDetail(saved.id);
+      toast(artifact ? '산출물을 수정했습니다.' : '산출물을 등록했습니다.');
     } catch (error) {
       if (form.isConnected) {
         const errorMessage = form.querySelector('#artifactFormError');
@@ -238,7 +237,7 @@ function openArtifactEditor(artifact = null) {
 function openArtifactDetail(id) {
   const artifact = artifacts.find(item => item.id === Number(id));
   if (!artifact) return;
-  $('#artifactDialogContent').innerHTML = `<div class="dialog-header detail-heading"><div><span class="category-badge" style="--category-color:${artifact.category_color}">${escapeHtml(artifact.category_name)}</span><h2>산출물 상세</h2></div><button class="icon-button" data-close="artifactDialog" aria-label="닫기">${icon('close')}</button></div><div class="detail-meta"><span>등록 ${escapeHtml(dateLabel(artifact.created_at))}</span><span>수정 ${escapeHtml(dateLabel(artifact.updated_at))}</span></div><div class="detail-body"><section><h3>산출물의 내용</h3><div class="prose">${escapeHtml(artifact.content)}</div></section><section><h3>산출물 URL 주소</h3>${artifactLink(artifact, artifact.url, 'artifact-url artifact-detail-url')}<p class="field-hint">URL을 클릭하면 산출물이 새 탭에서 열립니다.</p></section></div><div class="dialog-actions sticky-actions"><button class="button danger-text" data-artifact-delete="${artifact.id}">${icon('trash')}삭제</button><span class="action-spacer"></span><button class="button" data-close="artifactDialog">닫기</button><button class="button primary" data-artifact-edit="${artifact.id}">${icon('edit')}수정하기</button></div>`;
+  $('#artifactDialogContent').innerHTML = `<div class="dialog-header detail-heading"><div><span class="category-badge" style="--category-color:${artifact.category_color}">${escapeHtml(artifact.category_name)}</span><h2>산출물 상세</h2></div><button class="icon-button" data-close="artifactDialog" aria-label="닫기">${icon('close')}</button></div><div class="detail-meta"><span>등록 ${escapeHtml(dateLabel(artifact.created_at))}</span><span>수정 ${escapeHtml(dateLabel(artifact.updated_at))}</span></div><div class="detail-body"><section><h3>산출물의 내용</h3><div class="prose">${escapeHtml(artifact.content)}</div></section><section><h3>산출물명 및 URL</h3><div class="artifact-detail-links">${artifactLinks(artifact).map(link => `<div class="artifact-detail-link"><h4>${escapeHtml(link.name)}</h4>${artifactLink(link, link.url, 'artifact-url artifact-detail-url')}</div>`).join('')}</div><p class="field-hint">URL을 클릭하면 산출물이 새 탭에서 열립니다.</p></section></div><div class="dialog-actions sticky-actions"><button class="button danger-text" data-artifact-delete="${artifact.id}">${icon('trash')}삭제</button><span class="action-spacer"></span><button class="button" data-close="artifactDialog">닫기</button><button class="button primary" data-artifact-edit="${artifact.id}">${icon('edit')}수정하기</button></div>`;
   showDialog('artifactDialog');
 }
 async function deleteArtifact(id) {

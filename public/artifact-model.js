@@ -1,4 +1,4 @@
-export const MAX_ARTIFACT_BATCH_SIZE = 50;
+export const MAX_ARTIFACT_LINKS = 50;
 
 export function normalizeArtifactUrl(value) {
   const input = String(value || '').trim();
@@ -15,19 +15,24 @@ export function artifactInput(body, categories) {
   const categoryId = Number(body.category_id);
   if (!categories.some(category => category.id === categoryId)) throw new Error('카테고리를 선택해 주세요.');
   const content = String(body.content || '').trim();
-  if (!content || content.length > 50000) throw new Error('산출물명을 1~50,000자로 입력해 주세요.');
-  return { category_id: categoryId, content, url: normalizeArtifactUrl(body.url) };
-}
-
-export function artifactBatchInput(body, categories) {
-  if (!Array.isArray(body.items) || !body.items.length || body.items.length > MAX_ARTIFACT_BATCH_SIZE) {
-    throw new Error(`산출물은 한 번에 1~${MAX_ARTIFACT_BATCH_SIZE}개까지 등록할 수 있습니다.`);
+  if (!content || content.length > 50000) throw new Error('산출물의 내용을 1~50,000자로 입력해 주세요.');
+  const inputLinks = Object.hasOwn(body, 'links') ? body.links : artifactLinks(body);
+  if (!Array.isArray(inputLinks) || !inputLinks.length || inputLinks.length > MAX_ARTIFACT_LINKS) {
+    throw new Error(`산출물명과 URL은 1~${MAX_ARTIFACT_LINKS}개까지 등록할 수 있습니다.`);
   }
-  return body.items.map((item, index) => {
+  const links = inputLinks.map((link, index) => {
     try {
-      return artifactInput({ category_id: body.category_id, content: item?.content, url: item?.url }, categories);
+      const name = String(link?.name || '').trim();
+      if (!name || name.length > 200) throw new Error('산출물명을 1~200자로 입력해 주세요.');
+      return { name, url: normalizeArtifactUrl(link?.url) };
     } catch (error) {
       throw new Error(`${index + 1}번째 산출물: ${error.message}`);
     }
   });
+  return { category_id: categoryId, content, links, url: links[0].url };
+}
+
+export function artifactLinks(artifact) {
+  if (Array.isArray(artifact?.links)) return artifact.links.filter(link => link && typeof link.name === 'string' && typeof link.url === 'string');
+  return artifact?.url ? [{ name: '기존 산출물', url: artifact.url }] : [];
 }

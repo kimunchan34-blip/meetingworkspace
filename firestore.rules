@@ -20,7 +20,7 @@ service cloud.firestore {
     match /users/{userId}/artifacts/{artifactId} {
       allow read, delete: if isOwner(userId);
       allow create, update: if isOwner(userId)
-        && request.resource.data.keys().hasOnly(['id', 'category_id', 'content', 'url', 'created_at', 'updated_at', 'version'])
+        && request.resource.data.keys().hasOnly(['id', 'category_id', 'content', 'url', 'links', 'created_at', 'updated_at', 'version'])
         && request.resource.data.id is int
         && artifactId == string(request.resource.data.id)
         && request.resource.data.category_id is int
@@ -31,6 +31,16 @@ service cloud.firestore {
         && request.resource.data.url is string
         && request.resource.data.url.size() <= 4096
         && request.resource.data.url.matches('^https?://[^/\\s]+.*$')
+        && (!('links' in request.resource.data) || (
+          request.resource.data.links is list
+          && request.resource.data.links.size() > 0
+          && request.resource.data.links.size() <= 50
+          && request.resource.data.links[0] is map
+          && request.resource.data.links[0].name is string
+          && request.resource.data.links[0].name.size() > 0
+          && request.resource.data.links[0].name.size() <= 200
+          && request.resource.data.links[0].url == request.resource.data.url
+        ))
         && request.resource.data.created_at is string
         && request.resource.data.updated_at is string
         && request.resource.data.version is int

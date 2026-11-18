@@ -2,18 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
-import { MAX_ARTIFACT_BATCH_SIZE, artifactBatchInput, artifactInput, normalizeArtifactUrl } from '../public/artifact-model.js';
+import { MAX_ARTIFACT_LINKS, artifactLinks, artifactInput, normalizeArtifactUrl } from '../public/artifact-model.js';
 
 const source = (await readFile(new URL('../public/cloud.js', import.meta.url), 'utf8')).replace(/^import .*;\r?\n/gm, '').replace(/export /g, '');
 const category = { id: 1, name: '기획', color: '#7762ca', count: 1 };
 async function workspace() {
   const documents = new Map([
-    ['users/team/workspace/config', { categories: [category, { id: 2, name: '개발', color: '#468b78', count: 0 }], nextMeetingId: 2, nextCategoryId: 3, version: 1 }],
+    ['users/team/workspace/config', { categories: [structuredClone(category), { id: 2, name: '개발', color: '#468b78', count: 0 }], nextMeetingId: 2, nextCategoryId: 3, version: 1 }],
     ['users/team/meetings/1', { id: 1, category_id: 1, title: '기존 회의', version: 1 }],
   ]);
   const snapshot = path => ({ exists: () => documents.has(path), data: () => structuredClone(documents.get(path)) });
   const context = {
-    artifactBatchInput, artifactInput, URL, TextEncoder, navigator: { onLine: true },
+    artifactInput, URL, TextEncoder, navigator: { onLine: true },
     firebaseConfig: { apiKey: 'test', projectId: 'test' }, initializeApp: () => ({}),
     getAuth: () => ({ currentUser: { uid: 'team' } }), getFirestore: () => ({}),
     setPersistence: async () => {}, browserSessionPersistence: {}, onAuthStateChanged: () => {},
@@ -94,63 +94,91 @@ test('stale edits and deletes, invalid URLs, missing items and offline writes pr
   assert.equal(JSON.stringify([...app.documents]), before);
 });
 
-test('batch registration saves separate artifacts and advances counts and IDs together', async () => {
+test('one artifact keeps its shared content and multiple named links through edits', async () => {
   const app = await workspace();
-  const saved = await app.request('/api/artifacts', 'POST', { category_id: '2', items: [
-    { content: ' 설계서 ', url: 'example.com/design' },
-    { content: '결과 보고서\n주요 내용', url: 'https://example.com/report?q=1&v=2' },
+  const content = '기존 산출물의 상세 내용\n두 번째 줄과 주요 논의 사항';
+  const saved = await app.request('/api/artifacts', 'POST', { category_id: '2', content, links: [
+    { name: ' 설계서 ', url: 'example.com/design' },
+    { name: '결과 보고서', url: 'https://example.com/report?q=1&v=2' },
   ] });
-  assert.deepEqual(Array.from(saved, item => item.id), [1, 2]);
-  assert.equal(saved[0].content, '설계서');
-  assert.equal(saved[0].url, 'https://example.com/design');
-  assert.equal(saved[1].content, '결과 보고서\n주요 내용');
-  assert.equal(saved[0].created_at, saved[1].created_at);
-  assert.ok(saved.every(item => item.category_id === 2 && item.version === 1));
-  assert.equal(app.config().nextArtifactId, 3);
+  assert.equal(saved.id, 1);
+  assert.equal(saved.content, content);
+  assert.equal(saved.links[0].name, '설계서');
+  assert.equal(saved.links[0].url, 'https://example.com/design');
+  assert.equal(saved.links[1].name, '결과 보고서');
+  assert.equal(saved.url, saved.links[0].url);
+  assert.equal(app.config().nextArtifactId, 2);
   assert.equal(app.config().version, 2);
-  assert.equal(app.config().categories[1].artifact_count, 2);
-  assert.equal((await app.fetchWorkspace()).artifacts.length, 2);
-  await assert.rejects(app.request('/api/categories/2', 'DELETE'), /산출물/);
-  const next = await app.request('/api/artifacts', 'POST', { category_id: 1, content: '추가 문서', url: 'example.com/next' });
-  assert.equal(next.id, 3);
-  const changed = await app.request('/api/artifacts/1', 'PUT', { ...saved[0], content: '수정된 설계서', category_id: 1 });
-  assert.equal(changed.version, 2);
   assert.equal(app.config().categories[1].artifact_count, 1);
-  await app.request('/api/artifacts/2', 'DELETE', { version: saved[1].version });
+  assert.equal((await app.fetchWorkspace()).artifacts.length, 1);
+  await assert.rejects(app.request('/api/categories/2', 'DELETE'), /산출물/);
+  const changed = await app.request('/api/artifacts/1', 'PUT', { ...saved, links: [saved.links[1], { name: '추가 자료', url: 'example.com/extra' }] });
+  assert.equal(changed.content, content);
+  assert.equal(changed.version, 2);
+  assert.equal(changed.created_at, saved.created_at);
+  assert.equal(changed.links.length, 2);
+  assert.equal(changed.url, saved.links[1].url);
+  assert.equal(changed.links[1].url, 'https://example.com/extra');
+  assert.equal(app.config().categories[1].artifact_count, 1);
+  await app.request('/api/artifacts/1', 'DELETE', { version: changed.version });
   assert.equal(app.config().categories[1].artifact_count, 0);
 });
 
-test('invalid batch entries and offline registration leave every document unchanged', async () => {
+test('legacy content and URL remain available and can gain additional named links', async () => {
   const app = await workspace();
+  const legacy = { id: 1, category_id: 1, content: '기존 내용\n보존할 상세 설명', url: 'https://example.com/legacy', version: 1, created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' };
+  app.documents.set('users/team/artifacts/1', structuredClone(legacy));
+  app.config().nextArtifactId = 2;
+  app.config().categories[0].artifact_count = 1;
+  const beforeRead = JSON.stringify([...app.documents]);
+  const fetched = (await app.fetchWorkspace()).artifacts[0];
+  assert.equal(fetched.content, legacy.content);
+  assert.deepEqual(artifactLinks(fetched), [{ name: '기존 산출물', url: legacy.url }]);
+  assert.equal(JSON.stringify([...app.documents]), beforeRead);
+  const saved = await app.request('/api/artifacts/1', 'PUT', { ...fetched, links: [...artifactLinks(fetched), { name: '새 보고서', url: 'example.com/new' }] });
+  assert.equal(saved.content, legacy.content);
+  assert.equal(saved.created_at, legacy.created_at);
+  assert.equal(saved.links[0].url, legacy.url);
+  assert.equal(saved.links.length, 2);
+  assert.equal((await app.fetchWorkspace()).artifacts.length, 1);
+  assert.equal(app.config().categories[0].artifact_count, 1);
+});
+
+test('invalid named links and offline writes preserve the entire artifact and its content', async () => {
+  const app = await workspace();
+  const saved = await app.request('/api/artifacts', 'POST', { category_id: 1, content: '보존할 내용', links: [{ name: '기존 설계서', url: 'example.com/original' }] });
   const before = JSON.stringify([...app.documents]);
-  const valid = { content: '설계서', url: 'example.com/design' };
-  for (const item of [
-    { content: ' ', url: 'example.com/report' },
-    { content: '보고서', url: '' },
-    { content: '보고서', url: 'javascript:alert(1)' },
+  const valid = { name: '설계서', url: 'example.com/design' };
+  for (const link of [
+    { name: ' ', url: 'example.com/report' },
+    { name: '가'.repeat(201), url: 'example.com/report' },
+    { name: '보고서', url: '' },
+    { name: '보고서', url: 'javascript:alert(1)' },
     null,
   ]) {
-    await assert.rejects(app.request('/api/artifacts', 'POST', { category_id: 1, items: [valid, item] }), /2번째 산출물/);
+    await assert.rejects(app.request('/api/artifacts/1', 'PUT', { ...saved, content: '변경될 내용', links: [valid, link] }), /2번째 산출물/);
     assert.equal(JSON.stringify([...app.documents]), before);
   }
-  for (const items of [[], null, {}, Array(MAX_ARTIFACT_BATCH_SIZE + 1).fill(valid)]) {
-    await assert.rejects(app.request('/api/artifacts', 'POST', { category_id: 1, items }), /한 번에/);
+  for (const links of [[], null, {}, Array(MAX_ARTIFACT_LINKS + 1).fill(valid)]) {
+    await assert.rejects(app.request('/api/artifacts', 'POST', { category_id: 1, content: '내용', links }), /1~50개/);
   }
-  await assert.rejects(app.request('/api/artifacts', 'POST', { category_id: 99, items: [valid] }), /카테고리/);
+  await assert.rejects(app.request('/api/artifacts', 'POST', { category_id: 99, content: '내용', links: [valid] }), /카테고리/);
   app.context.navigator.onLine = false;
-  await assert.rejects(app.request('/api/artifacts', 'POST', { category_id: 1, items: [valid, valid] }), /인터넷/);
+  await assert.rejects(app.request('/api/artifacts/1', 'PUT', { ...saved, links: [valid, valid] }), /인터넷/);
   assert.equal(JSON.stringify([...app.documents]), before);
 });
 
-test('batch registration supports the limit and refuses to overwrite an existing ID', async () => {
+test('fifty links still create one record and an existing ID cannot be overwritten', async () => {
   const app = await workspace();
-  const items = Array.from({ length: MAX_ARTIFACT_BATCH_SIZE }, (_, index) => ({ content: `문서 ${index + 1}`, url: `example.com/${index + 1}` }));
-  const saved = await app.request('/api/artifacts', 'POST', { category_id: 1, items });
-  assert.equal(saved.length, MAX_ARTIFACT_BATCH_SIZE);
-  assert.equal(app.config().nextArtifactId, MAX_ARTIFACT_BATCH_SIZE + 1);
-  assert.equal(app.config().categories[0].artifact_count, MAX_ARTIFACT_BATCH_SIZE);
+  const links = Array.from({ length: MAX_ARTIFACT_LINKS }, (_, index) => ({ name: `문서 ${index + 1}`, url: `example.com/${index + 1}` }));
+  const saved = await app.request('/api/artifacts', 'POST', { category_id: 1, content: '가'.repeat(50000), links });
+  assert.equal(saved.links.length, MAX_ARTIFACT_LINKS);
+  assert.equal(saved.content.length, 50000);
+  assert.equal(app.config().nextArtifactId, 2);
+  assert.equal(app.config().categories[0].artifact_count, 1);
+  assert.equal((await app.fetchWorkspace()).artifacts.length, 1);
   app.config().nextArtifactId = 1;
   const before = JSON.stringify([...app.documents]);
-  await assert.rejects(app.request('/api/artifacts', 'POST', { category_id: 1, items: items.slice(0, 2) }), /이미 사용/);
+  await assert.rejects(app.request('/api/artifacts', 'POST', { category_id: 1, content: '다른 내용', links: links.slice(0, 2) }), /이미 사용/);
   assert.equal(JSON.stringify([...app.documents]), before);
 });

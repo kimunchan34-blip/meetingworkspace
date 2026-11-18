@@ -73,14 +73,25 @@ dialog { max-height: calc(100dvh - 24px); }
 .form-section-label { margin-top: 16px; }
 .sticky-actions { padding: 12px 24px; }
 .form-error:empty { display: none; }
+#artifactContentInput { height: clamp(72px, 18dvh, 144px); min-height: 72px; }
 .artifact-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
 #artifactEntries { display: grid; gap: 14px; margin-top: 16px; }
 .artifact-editor-row { border: 1px solid var(--line); border-radius: 8px; padding: 14px; min-width: 0; }
 .artifact-entry-heading, .artifact-entry-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .artifact-entry-heading { min-height: 28px; color: #7a6e88; font-size: 11px; }
 .artifact-editor-row .form-section-label { margin-top: 10px; }
-.artifact-editor-row textarea { min-height: 64px; }
+.artifact-link-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 12px; }
+.artifact-link-fields label, .artifact-link-fields input { min-width: 0; }
 .artifact-entry-actions { margin-top: 12px; flex-wrap: wrap; }
+.artifact-list-links { display: flex; align-items: center; gap: 8px; }
+.artifact-list-links .artifact-url { min-width: 0; }
+.artifact-list-links .text-button { flex-shrink: 0; }
+.artifact-detail-links { display: grid; gap: 10px; }
+.artifact-detail-link { padding: 12px; border: 1px solid var(--line); border-radius: 7px; min-width: 0; }
+.artifact-detail-link h4 { margin: 0 0 6px; font-size: 12px; color: #7b668e; overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .artifact-link-fields { grid-template-columns: minmax(0, 1fr); gap: 0; }
+}
 
 /* A narrow content area uses cards instead of a horizontally scrolling table. */
 @container (max-width: 620px) {
