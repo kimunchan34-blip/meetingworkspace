@@ -73,7 +73,14 @@ dialog { max-height: calc(100dvh - 24px); }
 .form-section-label { margin-top: 16px; }
 .sticky-actions { padding: 12px 24px; }
 .form-error:empty { display: none; }
-#artifactContentInput { height: clamp(72px, 18dvh, 144px); min-height: 72px; }
+.artifact-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+#artifactEntries { display: grid; gap: 14px; margin-top: 16px; }
+.artifact-editor-row { border: 1px solid var(--line); border-radius: 8px; padding: 14px; min-width: 0; }
+.artifact-entry-heading, .artifact-entry-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.artifact-entry-heading { min-height: 28px; color: #7a6e88; font-size: 11px; }
+.artifact-editor-row .form-section-label { margin-top: 10px; }
+.artifact-editor-row textarea { min-height: 64px; }
+.artifact-entry-actions { margin-top: 12px; flex-wrap: wrap; }
 
 /* A narrow content area uses cards instead of a horizontally scrolling table. */
 @container (max-width: 620px) {

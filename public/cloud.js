@@ -2,7 +2,7 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/13.4.0/firebas
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut, setPersistence, browserSessionPersistence } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js';
 import { getFirestore, doc, collection, getDocFromServer, getDocsFromServer, onSnapshot, runTransaction } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js';
 import { firebaseConfig } from './firebase-config.js';
-import { artifactInput } from './artifact-model.js';
+import { artifactBatchInput, artifactInput } from './artifact-model.js';
 
 let auth, db;
 export const workspaceAccountEmail = 'workspace-access@meetingworkspace.invalid';
@@ -149,15 +149,29 @@ export async function request(url, method = 'GET', body) {
     }
     if (resource === 'artifacts') {
       const nextId = config.nextArtifactId || 1;
+      const changeCount = (categoryId, difference) => {
+        const category = categories.find(item => item.id === categoryId);
+        if (category) category.artifact_count = Math.max(0, (category.artifact_count || 0) + difference);
+      };
+      if (method === 'POST' && Object.hasOwn(body || {}, 'items')) {
+        const inputs = artifactBatchInput(body, categories);
+        const artifactRefs = inputs.map((_, index) => doc(refs.artifacts, String(nextId + index)));
+        const snapshots = await Promise.all(artifactRefs.map(ref => transaction.get(ref)));
+        if (snapshots.some(snapshot => snapshot.exists())) throw new Error('산출물 번호가 이미 사용 중입니다. 목록을 새로고침한 후 다시 등록해 주세요.');
+        const now = new Date().toISOString();
+        const saved = inputs.map((input, index) => ({ ...input, id: nextId + index, created_at: now, updated_at: now, version: 1 }));
+        saved.forEach((artifact, index) => {
+          changeCount(artifact.category_id, 1);
+          transaction.set(artifactRefs[index], artifact);
+        });
+        transaction.update(refs.config, { categories, nextArtifactId: nextId + saved.length, version: config.version + 1 });
+        return saved;
+      }
       const artifactRef = doc(refs.artifacts, String(method === 'POST' ? nextId : id));
       const snapshot = await transaction.get(artifactRef);
       const existing = snapshot.exists() ? snapshot.data() : null;
       if (method !== 'POST' && !existing) throw new Error('산출물을 찾을 수 없습니다.');
       if (existing && existing.version !== body?.version) throw new Error('다른 기기에서 산출물이 변경되었습니다. 목록에서 산출물을 다시 열어 확인해 주세요.');
-      const changeCount = (categoryId, difference) => {
-        const category = categories.find(item => item.id === categoryId);
-        if (category) category.artifact_count = Math.max(0, (category.artifact_count || 0) + difference);
-      };
       if (method === 'DELETE') {
         changeCount(existing.category_id, -1);
         transaction.delete(artifactRef);

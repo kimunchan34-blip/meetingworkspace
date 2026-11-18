@@ -1,3 +1,5 @@
+export const MAX_ARTIFACT_BATCH_SIZE = 50;
+
 export function normalizeArtifactUrl(value) {
   const input = String(value || '').trim();
   if (!input || input.length > 4096 || /\s/.test(input)) throw new Error('산출물 URL 주소를 확인해 주세요.');
@@ -13,6 +15,19 @@ export function artifactInput(body, categories) {
   const categoryId = Number(body.category_id);
   if (!categories.some(category => category.id === categoryId)) throw new Error('카테고리를 선택해 주세요.');
   const content = String(body.content || '').trim();
-  if (!content || content.length > 50000) throw new Error('산출물의 내용을 1~50,000자로 입력해 주세요.');
+  if (!content || content.length > 50000) throw new Error('산출물명을 1~50,000자로 입력해 주세요.');
   return { category_id: categoryId, content, url: normalizeArtifactUrl(body.url) };
+}
+
+export function artifactBatchInput(body, categories) {
+  if (!Array.isArray(body.items) || !body.items.length || body.items.length > MAX_ARTIFACT_BATCH_SIZE) {
+    throw new Error(`산출물은 한 번에 1~${MAX_ARTIFACT_BATCH_SIZE}개까지 등록할 수 있습니다.`);
+  }
+  return body.items.map((item, index) => {
+    try {
+      return artifactInput({ category_id: body.category_id, content: item?.content, url: item?.url }, categories);
+    } catch (error) {
+      throw new Error(`${index + 1}번째 산출물: ${error.message}`);
+    }
+  });
 }
