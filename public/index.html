@@ -4,7 +4,7 @@
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>모아 · 회의록 관리</title>
   <meta name="description" content="회의 기록과 산출물을 카테고리별로 관리하는 팀 워크스페이스">
-  <link rel="stylesheet" href="./style.css"><script type="module" src="./bootstrap.js"></script>
+  <link rel="stylesheet" href="./style.css"><link rel="stylesheet" href="./layout.css"><script type="module" src="./bootstrap.js"></script>
 </head>
 <body>
   <section class="auth-screen" id="authScreen">
@@ -28,6 +28,7 @@
     <button class="nav-item" id="allArtifacts"><span data-icon="link"></span>산출물 관리<span class="nav-count" id="artifactTotalCount">0</span></button>
     <div class="category-heading"><span class="nav-label">카테고리</span><button class="icon-button" id="manageCategories" title="카테고리 관리" aria-label="카테고리 관리"><span data-icon="settings"></span></button></div>
     <nav id="categoryNav" aria-label="카테고리"></nav>
+    <select id="sidebarCategorySelect" aria-label="카테고리 선택" hidden><option value="">전체 카테고리</option></select>
     <button class="add-category" id="addCategory"><span data-icon="plus"></span>카테고리 관리</button>
     <div class="sidebar-bottom"><span class="storage-dot" id="connectionDot"></span><span id="connectionLabel">클라우드 연결 중</span><small id="accountLabel"></small><button class="text-button" id="logoutButton">로그아웃</button></div>
   </aside>

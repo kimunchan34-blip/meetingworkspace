@@ -23,7 +23,36 @@ const paths = {
 const icon = name => `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.document}</svg>`;
 function hydrateIcons() { document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); }); }
 let meetings = [], artifacts = [], categories = [], selectedCategory = '', currentView = 'meetings', page = 1, artifactPage = 1, toastTimer;
-const pageSize = 7;
+let meetingPageSize = 7, artifactPageSize = 7, layoutFrame = 0;
+function scheduleLayout() {
+  if (layoutFrame) return;
+  layoutFrame = requestAnimationFrame(() => {
+    layoutFrame = 0;
+    if ($('#workspaceApp').hidden) return;
+    const nav = $('#categoryNav');
+    const select = $('#sidebarCategorySelect');
+    nav.hidden = false; select.hidden = true;
+    const compactCategories = window.innerWidth <= 600 || nav.scrollHeight > nav.clientHeight + 1;
+    nav.hidden = compactCategories; select.hidden = !compactCategories;
+    const isArtifacts = currentView === 'artifacts';
+    const list = $(isArtifacts ? '#artifactList' : '#meetingList');
+    const available = list.getBoundingClientRect().height;
+    if (available <= 0) return;
+    list.closest('.archive').classList.toggle('compact-list', available < 180);
+    const rows = [...list.querySelectorAll('tbody tr')];
+    if (!rows.length) return;
+    const header = list.querySelector('thead')?.getBoundingClientRect().height || 0;
+    const rowHeight = Math.max(1, ...rows.map(row => row.getBoundingClientRect().height));
+    const capacity = Math.max(1, Math.min(30, Math.floor((available - header - 2) / rowHeight)));
+    if (isArtifacts && capacity !== artifactPageSize) {
+      artifactPage = Math.floor((artifactPage - 1) * artifactPageSize / capacity) + 1;
+      artifactPageSize = capacity; renderArtifactList();
+    } else if (!isArtifacts && capacity !== meetingPageSize) {
+      page = Math.floor((page - 1) * meetingPageSize / capacity) + 1;
+      meetingPageSize = capacity; renderList();
+    }
+  });
+}
 const localDate = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const dateLabel = value => new Date(value).toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short' });
 function toast(message, error = false) {
@@ -62,6 +91,8 @@ function renderNav() {
   $('#categoryNav').innerHTML = categories.map(category => `<button class="nav-item category-item ${selectedCategory === String(category.id) ? 'active' : ''}" data-category="${category.id}"><span class="category-dot" style="--category-color:${category.color}"></span><span class="category-name">${escapeHtml(category.name)}</span><span class="nav-count">${isArtifacts ? category.artifact_count : category.count}</span></button>`).join('');
   $('#categoryFilter').innerHTML = '<option value="">전체 카테고리</option>' + categories.map(category => `<option value="${category.id}">${escapeHtml(category.name)}</option>`).join('');
   $('#categoryFilter').value = selectedCategory;
+  $('#sidebarCategorySelect').innerHTML = $('#categoryFilter').innerHTML;
+  $('#sidebarCategorySelect').value = selectedCategory;
   $('#artifactCategoryFilter').innerHTML = $('#categoryFilter').innerHTML;
   $('#artifactCategoryFilter').value = selectedCategory;
   const categoryName = categories.find(category => String(category.id) === selectedCategory)?.name;
@@ -81,6 +112,7 @@ function renderNav() {
   $('#statArtifactTotal').innerHTML = `${artifactScope.length}<small>건</small>`;
   $('#statArtifactMonth').innerHTML = `${artifactScope.filter(artifact => localDate(new Date(artifact.created_at)).startsWith(localDate().slice(0, 7))).length}<small>건</small>`;
   $('#statArtifactCategories').innerHTML = `${new Set(artifactScope.map(artifact => artifact.category_id)).size}<small>개</small>`;
+  scheduleLayout();
 }
 function switchView(view) {
   currentView = view; selectedCategory = ''; page = 1; artifactPage = 1;
@@ -98,6 +130,8 @@ function filteredArtifacts() {
     .sort((a, b) => ($('#artifactSort').value === 'asc' ? 1 : -1) * (a.updated_at.localeCompare(b.updated_at) || a.id - b.id));
 }
 function renderArtifactList() {
+  const pageSize = artifactPageSize;
+  scheduleLayout();
   const filtered = filteredArtifacts();
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   artifactPage = Math.min(artifactPage, pageCount);
@@ -167,6 +201,8 @@ function filteredMeetings() {
   }).sort((a, b) => $('#sortOrder').value === 'asc' ? a.starts_at.localeCompare(b.starts_at) || a.id - b.id : b.starts_at.localeCompare(a.starts_at) || b.id - a.id);
 }
 function renderList() {
+  const pageSize = meetingPageSize;
+  scheduleLayout();
   const filtered = filteredMeetings();
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   page = Math.min(page, pageCount);
@@ -300,6 +336,7 @@ $('#newMeeting').onclick = () => openEditor();
 $('#allMeetings').onclick = () => switchView('meetings');
 $('#allArtifacts').onclick = () => switchView('artifacts');
 $('#newArtifact').onclick = () => openArtifactEditor();
+$('#sidebarCategorySelect').onchange = event => { selectedCategory = event.target.value; page = 1; artifactPage = 1; renderNav(); renderList(); renderArtifactList(); };
 $('#artifactCategoryFilter').onchange = event => { selectedCategory = event.target.value; artifactPage = 1; renderNav(); renderArtifactList(); };
 ['artifactSearch', 'artifactSort'].forEach(id => { $(`#${id}`).addEventListener('input', () => { artifactPage = 1; renderArtifactList(); }); });
 $('#artifactPrevPage').onclick = () => { artifactPage--; renderArtifactList(); };
@@ -342,6 +379,13 @@ function connectionState(online) {
 }
 window.addEventListener('offline', () => connectionState(false));
 window.addEventListener('online', () => connectionState(false));
+window.addEventListener('resize', scheduleLayout);
+window.visualViewport?.addEventListener('resize', scheduleLayout);
+if (typeof ResizeObserver !== 'undefined') {
+  const layoutObserver = new ResizeObserver(scheduleLayout);
+  ['.sidebar', '#meetingList', '#artifactList'].forEach(selector => layoutObserver.observe($(selector)));
+}
+document.fonts?.ready.then(scheduleLayout);
 try {
   await initializeCloud(async user => {
     const generation = ++authGeneration;
@@ -365,6 +409,7 @@ try {
       $('#accountLabel').textContent = '공용 워크스페이스';
       $('#authScreen').hidden = true;
       $('#workspaceApp').hidden = false;
+      scheduleLayout();
       stopWatching = watchWorkspace(data => { if (generation === authGeneration) applyWorkspace(data); }, error => { connectionState(false); toast(friendlyError(error), true); }, connectionState);
     } catch (error) { $('#authMessage').textContent = friendlyError(error); }
   });
